@@ -51,7 +51,7 @@ static ExternalServer *GetExternalServerFromExternalServersManager (ServersManag
 
 static ExternalServer *RemoveExternalServerFromExternalServersManager (ServersManager *manager_p, const char * const server_uri_s, ExternalServerDeserialiser deserialise_fn);
 
-static bool AddExternalServerToExternalServersManager (ServersManager *manager_p, ExternalServer *server_p, ExternalServerSerialiser serialise_fn);
+static int AddExternalServerToExternalServersManager (ServersManager *manager_p, ExternalServer *server_p, ExternalServerSerialiser serialise_fn);
 
 static LinkedList *GetAllExternalServersFromExternalServersManager (ServersManager *manager_p, ExternalServerDeserialiser deserialise_fn);
 
@@ -72,15 +72,23 @@ void ReleaseServersManager (ServersManager *manager_p)
 
 ServersManager *AllocateSimpleExternalServersManager (void)
 {
-	SimpleExternalServersManager *manager_p = (SimpleExternalServersManager *) AllocMemory (sizeof (SimpleExternalServersManager));
+	LinkedList *servers_p = AllocateLinkedList (FreeExternalServerNode);
 
-	if (manager_p)
+	if (servers_p)
 		{
-			InitServersManager (& (manager_p -> sesm_base_manager), AddExternalServerToExternalServersManager, GetExternalServerFromExternalServersManager, RemoveExternalServerFromExternalServersManager, GetAllExternalServersFromExternalServersManager, FreeSimpleExternalServersManager);
-			InitLinkedList (& (manager_p -> sesm_servers));
+			SimpleExternalServersManager *manager_p = (SimpleExternalServersManager *) AllocMemory (sizeof (SimpleExternalServersManager));
 
-			return (& (manager_p -> sesm_base_manager));
-		}
+			if (manager_p)
+				{
+					InitServersManager (& (manager_p -> sesm_base_manager), AddExternalServerToExternalServersManager, GetExternalServerFromExternalServersManager, RemoveExternalServerFromExternalServersManager, GetAllExternalServersFromExternalServersManager, FreeSimpleExternalServersManager);
+
+					manager_p -> sesm_servers_p = servers_p;
+
+					return (& (manager_p -> sesm_base_manager));
+				}		/* if (manager_p) */
+
+			FreeLinkedList (servers_p);
+		}		/* if (servers_p) */
 
 	return NULL;
 }
@@ -90,41 +98,45 @@ void FreeSimpleExternalServersManager (ServersManager *manager_p)
 {
 	SimpleExternalServersManager *real_manager_p = (SimpleExternalServersManager *) manager_p;
 
-	ClearLinkedList (& (real_manager_p -> sesm_servers));
+	FreeLinkedList (real_manager_p -> sesm_servers_p);
 	FreeMemory (real_manager_p);
 }
 
 
-
-
-static bool AddExternalServerToExternalServersManager (ServersManager *manager_p, ExternalServer *server_p, ExternalServerSerialiser UNUSED_PARAM (serialise_fn))
+static int AddExternalServerToExternalServersManager (ServersManager *manager_p, ExternalServer *server_p, ExternalServerSerialiser UNUSED_PARAM (serialise_fn))
 {
-	bool success_flag = false;
+	int res  = -1;
 	SimpleExternalServersManager *external_servers_manager_p = (SimpleExternalServersManager *) manager_p;
 	ExternalServerNode *node_p = GetExternalServerNode (external_servers_manager_p, server_p -> es_uri_s);
 
 	if (node_p)
 		{
-			success_flag = (node_p -> esn_server_p == server_p);
+			if (node_p -> esn_server_p == server_p)
+				{
+					// since we've taken ownership of server_p, specify that in the return variable
+					res = 1;
+				}
 		}
 	else
 		{
-			node_p = AllocateExternalServerNode (server_p, MF_SHADOW_USE);
+			node_p = AllocateExternalServerNode (server_p, MF_SHALLOW_COPY);
 
 			if (node_p)
 				{
-					LinkedListAddTail (& (external_servers_manager_p -> sesm_servers), (ListItem * const) node_p);
-					success_flag = true;
+					LinkedListAddTail (external_servers_manager_p -> sesm_servers_p, (ListItem * const) node_p);
+
+					// since we've taken ownership of server_p, specify that in the return variable
+					res = 1;
 				}
 		}
 
-	return success_flag;
+	return res;
 }
 
 
 static ExternalServerNode *GetExternalServerNode (SimpleExternalServersManager *manager_p, const char * const server_uri_s)
 {
-	ExternalServerNode *node_p = (ExternalServerNode *) manager_p -> sesm_servers.ll_head_p;
+	ExternalServerNode *node_p = (ExternalServerNode *) manager_p -> sesm_servers_p -> ll_head_p;
 
 	while (node_p)
 		{
@@ -159,9 +171,10 @@ static ExternalServer *RemoveExternalServerFromExternalServersManager (ServersMa
 		{
 			server_p = node_p -> esn_server_p;
 
-			LinkedListRemove (& (external_servers_manager_p -> sesm_servers), (ListItem * const) node_p);
+			LinkedListRemove (external_servers_manager_p -> sesm_servers_p, (ListItem * const) node_p);
 
 			node_p -> esn_server_p = NULL;
+			node_p -> esn_server_mem = MF_ALREADY_FREED;
 			FreeExternalServerNode ((ListItem * const) node_p);
 		}
 
@@ -173,7 +186,39 @@ static ExternalServer *RemoveExternalServerFromExternalServersManager (ServersMa
 static LinkedList *GetAllExternalServersFromExternalServersManager (ServersManager *manager_p, ExternalServerDeserialiser UNUSED_PARAM (deserialise_fn))
 {
 	SimpleExternalServersManager *external_servers_manager_p = (SimpleExternalServersManager *) manager_p;
-	return & (external_servers_manager_p -> sesm_servers);
+	LinkedList *copied_list_p = AllocateLinkedList (FreeExternalServerNode);
+
+	if (copied_list_p)
+		{
+			ExternalServerNode *src_node_p = (ExternalServerNode *) (external_servers_manager_p -> sesm_servers_p -> ll_head_p);
+			bool success_flag = true;
+
+			while (src_node_p && success_flag)
+				{
+					ExternalServerNode *dest_node_p = AllocateExternalServerNode (src_node_p -> esn_server_p, MF_SHADOW_USE);
+
+					if (dest_node_p)
+						{
+							LinkedListAddTail (copied_list_p, & (dest_node_p -> esn_node));
+							src_node_p = (ExternalServerNode *) (src_node_p -> esn_node.ln_next_p);
+						}
+					else
+						{
+							success_flag = false;
+						}
+
+				}		/* while (src_node_p && success_flag) */
+
+
+			if (success_flag)
+				{
+					return copied_list_p;
+				}
+
+			FreeLinkedList (copied_list_p);
+		}		/* if (copied_list_p) */
+
+	return NULL;
 }
 
 

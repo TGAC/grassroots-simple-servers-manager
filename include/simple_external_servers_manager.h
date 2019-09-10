@@ -36,7 +36,7 @@
 typedef struct SimpleExternalServersManager
 {
 	ServersManager sesm_base_manager;
-	LinkedList sesm_servers;
+	LinkedList *sesm_servers_p;
 } SimpleExternalServersManager;
 
 
