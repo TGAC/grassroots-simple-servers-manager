@@ -34,7 +34,7 @@
 */
 
 #ifdef SHARED_LIBRARY /* defined if LIB is compiled as a DLL */
-  #ifdef SIMPLE_EXTERNAL_SERVERS_MANAGER_REST_LIBRARY_EXPORTS /* defined if we are building the LIB DLL (instead of using it) */
+  #ifdef SIMPLE_EXTERNAL_SERVERS_MANAGER_EXPORTS  /* defined if we are building the LIB DLL (instead of using it) */
     #define SIMPLE_EXTERNAL_SERVERS_MANAGER_API LIB_HELPER_SYMBOL_EXPORT
   #else
     #define SIMPLE_EXTERNAL_SERVERS_MANAGER_API LIB_HELPER_SYMBOL_IMPORT
